@@ -94,7 +94,7 @@ Coloque o arquivo island.html no mesmo Wi-Fi e acesse pelo navegador.
 
 ## 🤖 Desenvolvido com IA Local
 
-Este projeto nasceu da curiosidade de provar que é possível gerar mundos 3D interativos com ferramentas gratuitas e locais.
+Este projeto nasceu da curiosidade de verificar se é possível gerar objetos 3D interativos com ferramentas gratuitas e locais obtendo resultados de qualidade.
 
 ### O pipeline
 ```
