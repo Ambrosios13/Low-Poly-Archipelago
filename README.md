@@ -102,7 +102,7 @@ Eu descrevia em linguagem natural
        ↓
 pi harness orquestrava a geração
        ↓
-Qwen 2.5 3B Q3-XXS gerava o código
+Qwen 3.8 27B Q3-XXS gerava o código
        ↓
 Eu revisava, ajustava, iterávamos
        ↓
@@ -118,15 +118,15 @@ Arquivo final rodando no navegador
 
 ### O modelo
 ```
-Modelo:       Qwen-2.5 3B Q3-XXS (quantização extrema)
-Quantização:  Q3-XXS — o formato mais comprimido do Qwen 2.5 3B
+Modelo:      Alibaba Qwen-3.8 27B Q3-XXS (quantização extrema)
+Quantização:  Q3-XXS — perfil de quantização de aproximadamente 3 bits por peso
 Loader:       Ollama
-VRAM strategy: Camadas distribuídas GPU + CPU com overlap
+Harness: Pi Coding Agent
 ```
 
 ### O que esse projeto prova?
 - Um **único arquivo HTML** pode conter um mundo 3D completo e interativo
-- Modelos LLM quantizados de ~3B são capazes de gerar código 3D **funcional e polido**
+- Modelos LLM quantizados de ~27B são capazes de gerar código 3D **funcional e polido** com poucas iterações
 - Desenvolvimento com IA local: **custo zero, privacidade total, sem limites**
 - Procedural generation + IA = mundos gerados sob demanda, sempre infinitos
 
@@ -170,4 +170,4 @@ Criado por Ambrosio (https://github.com/Ambrosios13) com assistência do modelo 
 
 ---
 
-*"Um mundo inteiro, um arquivo, zero dependências. Feito com IA que roda na sua máquina."*
+*"Uma fatia de um mundo inteiro, um arquivo, zero dependências. Feito com IA que roda na sua máquina."*
