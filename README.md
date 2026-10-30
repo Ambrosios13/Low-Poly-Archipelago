@@ -8,10 +8,6 @@ Explore um arquipélago vivo com barcos navegando entre portos, tubarões patrul
 
 ![Panorama diurno do arquipélago](assets/arquipelago-panorama-diurno.gif)
 
-![Exploração noturna da ilha principal](assets/arquipelago-noite-ilha-principal.gif)
-
-![Vista aérea noturna do arquipélago](assets/arquipelago-vista-aerea-noturna.gif)
-
 ---
 
 ## ▶️ Como Jogar/Explorar
@@ -60,6 +56,8 @@ Coloque o arquivo island.html no mesmo Wi-Fi e acesse pelo navegador.
 | 🌊 **Ondas** | Simulação de ondas no oceano com movimento orgânico |
 | 🎥 **Câmera** | OrbitControls — arraste para girar, scroll para zoom |
 
+| 🌎 **Vista Aérea** | ![Vista aérea noturna do arquipélago](assets/arquipelago-vista-aerea-noturna.gif) |
+
 ### Interações
 - **Arrastar** → girar a câmera
 - **Segurar num barco** → arrastar (soltar = ele volta à rota)
@@ -68,6 +66,8 @@ Coloque o arquivo island.html no mesmo Wi-Fi e acesse pelo navegador.
 - **Scroll / 2 dedos** → zoom in/out
 - **Touch 1 dedo** → rotacionar (celular)
 - **Touch 2 dedos** → zoom (celular)
+
+![Exploração noturna da ilha principal](assets/arquipelago-noite-ilha-principal.gif)
 
 ---
 
