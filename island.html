@@ -1,0 +1,1568 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arquipélago Low-Poly 3D — Three.js</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #0b1026; }
+  canvas { display: block; touch-action: none; user-select: none; }
+  #title {
+    position: fixed; top: 20px; left: 20px; z-index: 10;
+    font-family: 'Segoe UI', sans-serif; color: #fff;
+    text-shadow: 0 2px 8px rgba(0,0,0,.6);
+    pointer-events: none; user-select: none;
+  }
+  #title h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: 2px; }
+  #title p { margin: 4px 0 0; font-size: 13px; opacity: .8; }
+  #hint {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    font-family: 'Segoe UI', sans-serif; color: #fff; opacity: .55;
+    font-size: 12px; pointer-events: none; user-select: none;
+  }
+  #loader {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: #0b1026; z-index: 20; color: #fff; font-family: 'Segoe UI', sans-serif;
+    transition: opacity .8s; font-size: 14px; letter-spacing: 3px;
+  }
+  #loader.hidden { opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="loader">GERANDO MÚNDO…</div>
+<div id="title"><h1>🏝️ ARQUIPÉLAGO LOW-POLY</h1><p>Three.js — single file</p></div>
+<div id="hint">arraste p/ girar · segure num barco p/ puxar (ele volta p/ rota sozinho) · toque numa nuvem p/ nevar · toque no vulcão p/ erupção · 3 portos: os barcos navegam A→B→C · scroll/2 dedos p/ zoom · 3 tubarões patrulham o mar + 1 baleia gigante + 1 grande embarcação navegante</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------- RNG com seed (determinístico) ----------
+let seed = 12345;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+// ---------- Renderer / Cena ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x87b5d8, 100, 340);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 700);
+camera.position.set(44, 30, 44);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.maxPolarAngle = Math.PI / 2.05;
+controls.minDistance = 15;
+controls.maxDistance = 230;
+controls.target.set(0, 1, 0);
+controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+
+// ---------- Luzes ----------
+const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x3a5f3f, 0.9);
+scene.add(hemi);
+
+const sun = new THREE.DirectionalLight(0xffe6b0, 2.2);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -100; sun.shadow.camera.right = 100;
+sun.shadow.camera.top = 100;    sun.shadow.camera.bottom = -100;
+sun.shadow.camera.far = 400;
+scene.add(sun);
+const sunTarget = new THREE.Object3D();
+scene.add(sunTarget);
+sun.target = sunTarget;
+
+// ---------- Material helpers ----------
+const mat = (color, flat = true) =>
+  new THREE.MeshStandardMaterial({ color, flatShading: flat, roughness: 0.9, metalness: 0 });
+
+// ---------- Água (o oceano agora) ----------
+const waterGeo = new THREE.CylinderGeometry(110, 110, 2, 96, 1, true);
+const water = new THREE.Mesh(
+  waterGeo,
+  new THREE.MeshStandardMaterial({ color: 0x1f7fd6, transparent: true, opacity: 0.8, roughness: 0.25, flatShading: true, depthWrite: false })
+);
+water.position.y = -2;
+scene.add(water);
+
+const waterTop = new THREE.Mesh(
+  new THREE.CylinderGeometry(109.5, 109.5, 0.3, 96),
+  new THREE.MeshStandardMaterial({ color: 0x35a2e8, transparent: true, opacity: 0.72, roughness: 0.3, flatShading: true, depthWrite: false })
+);
+waterTop.position.y = -0.9;
+scene.add(waterTop);
+
+// ---------- Paleta da ilha ----------
+const COL = {
+  rock:  0x8a6b4f, dirt: 0x7a5c39, sand: 0xe7cf8f, grass: 0x69b04a,
+  hill:  0x57a04b, rockGray: 0x9aa0a6,
+};
+
+// ---------- Ilha principal (a maior do arquipélago) ----------
+const island = new THREE.Group();
+scene.add(island);
+
+// Rocha em "camadas": cone invertido + saia de terra (tudo irregular, seeded)
+function jaggedRockMesh(r, h, sides, heightSegs, color) {
+  const g = new THREE.ConeGeometry(r, h, sides, heightSegs);
+  g.rotateX(Math.PI);
+  const pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    pos.setXYZ(i,
+      pos.getX(i) * (0.82 + rnd() * 0.36),
+      pos.getY(i),
+      pos.getZ(i) * (0.82 + rnd() * 0.36)
+    );
+  }
+  g.computeVertexNormals();
+  const m = new THREE.Mesh(g, mat(color));
+  m.castShadow = true;
+  return m;
+}
+
+// "Pé" rochoso que aparece só de leve sob a terra (o resto fica no oceano)
+const baseRock = jaggedRockMesh(30, 8, 8, 2, COL.rock);
+baseRock.position.y = -4 - 4;
+island.add(baseRock);
+const upperRock = jaggedRockMesh(24, 7, 8, 2, COL.rock);
+upperRock.position.y = -0.5 - 3.5;
+island.add(upperRock);
+
+// Terra em camadas: lama → areia da praia → grama → colinas
+const skirt = new THREE.Mesh(new THREE.CylinderGeometry(21, 23, 2.6, 9), mat(COL.dirt));
+skirt.position.y = -2.4; skirt.castShadow = true; skirt.receiveShadow = true;
+island.add(skirt);
+const beach = new THREE.Mesh(new THREE.CylinderGeometry(19, 17.5, 2.6, 9), mat(COL.sand));
+beach.position.y = -1.7; beach.castShadow = true; beach.receiveShadow = true;
+island.add(beach);
+const grass = new THREE.Mesh(new THREE.CylinderGeometry(15.5, 16.5, 2.2, 9), mat(COL.grass));
+grass.position.y = -1.0; grass.castShadow = true; grass.receiveShadow = true;
+island.add(grass);
+
+// Colinas suaves (uma SE, outra SW)
+function hill(r, h, x, z, color) {
+  const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, 7), mat(color));
+  m.position.set(x, -0.1 + h / 2, z);
+  m.castShadow = true; m.receiveShadow = true;
+  return m;
+}
+island.add(hill(6, 3.2, 6.5, 5, COL.hill));
+island.add(hill(5, 2.8, -6, 6.5, COL.hill));
+
+// Montanha central: pico principal + pico vizinho, ambos nevados
+function peak(r, h, x, z, color) {
+  const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, 6), mat(color));
+  m.position.set(x, -0.2 + h / 2, z);
+  m.castShadow = true;
+  return m;
+}
+island.add(peak(8, 11, -5, -4, 0x7c9b5b));
+island.add(peak(5, 7, 4, -6, 0x7c9b5b));
+function cap(r, h, x, y, z, color) {
+  const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, 6), mat(color));
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  return m;
+}
+island.add(cap(3, 3.6, -5, 10.6, -4, 0xf2f6ff));
+island.add(cap(1.8, 2.4, 4, 7.1, -6, 0xf2f6ff));
+
+// Lago (a lagoa que "sobra" na grama)
+const pond = new THREE.Mesh(
+  new THREE.CylinderGeometry(3, 3, 0.35, 10),
+  new THREE.MeshStandardMaterial({ color: 0x35a2e8, transparent: true, opacity: 0.9, roughness: 0.2, flatShading: true })
+);
+pond.position.set(0, -0.05, 9.5);
+island.add(pond);
+
+// ---------- Flora & flora helpers ----------
+function tree(x, z, s = 1, y = 0.1) {
+  const g = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.35, 1.4, 5), mat(0x6e4b2a));
+  trunk.position.y = 0.7;
+  trunk.castShadow = true;
+  const c1 = new THREE.Mesh(new THREE.ConeGeometry(1.3, 2.4, 6), mat(0x2e7d32));
+  c1.position.y = 2.4; c1.castShadow = true;
+  const c2 = new THREE.Mesh(new THREE.ConeGeometry(1.0, 2.0, 6), mat(0x3a9440));
+  c2.position.y = 3.4; c2.castShadow = true;
+  g.add(trunk, c1, c2);
+  g.position.set(x, y, z);
+  g.scale.setScalar(s * (0.7 + rnd() * 0.5));
+  g.rotation.y = rnd() * Math.PI * 2;
+  return g;
+}
+function palm(x, z, s = 1, y = 0) {
+  const g = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.26, 2.6, 5), mat(0x8a5a2b));
+  trunk.position.y = 1.3; trunk.rotation.z = 0.15; trunk.castShadow = true;
+  g.add(trunk);
+  const crown = new THREE.Group();
+  crown.position.set(0.25, 2.6, 0);
+  const leafMat = mat(0x2f9e44);
+  for (let i = 0; i < 6; i++) {
+    const p = new THREE.Group();
+    p.rotation.y = (i / 6) * Math.PI * 2;
+    const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.9, 4), leafMat);
+    leaf.scale.z = 0.28;
+    leaf.position.set(0.85, 0, 0);
+    leaf.rotation.z = -Math.PI / 2 - 0.35;
+    leaf.castShadow = true;
+    p.add(leaf);
+    crown.add(p);
+  }
+  const nut = new THREE.Mesh(new THREE.IcosahedronGeometry(0.22, 0), mat(0x6e4b2a));
+  nut.position.y = -0.15;
+  crown.add(nut);
+  g.add(crown);
+  g.position.set(x, y, z);
+  g.scale.setScalar(s * (0.8 + rnd() * 0.4));
+  g.rotation.y = rnd() * Math.PI * 2;
+  return g;
+}
+function bush(x, z, s = 1, y = 0.1) {
+  const g = new THREE.Group();
+  const m = mat(0x3a8a3f);
+  for (let i = 0; i < 3; i++) {
+    const b = new THREE.Mesh(new THREE.IcosahedronGeometry(0.45 + rnd() * 0.2, 0), m);
+    b.position.set((i - 1) * 0.35, 0.3, (i % 2) * 0.3 - 0.1);
+    b.castShadow = true;
+    g.add(b);
+  }
+  g.position.set(x, y, z);
+  g.scale.setScalar(s * (0.7 + rnd() * 0.5));
+  return g;
+}
+function house(x, z, s = 1) {
+  const g = new THREE.Group();
+  const base = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.6, 2.2), mat(0xc9a86b));
+  base.position.y = 0.8; base.castShadow = true;
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(2, 1.4, 4), mat(0x8a4030));
+  roof.position.y = 2.3; roof.rotation.y = Math.PI / 4; roof.castShadow = true;
+  g.add(base, roof);
+  g.position.set(x, 0.1, z);
+  g.scale.setScalar(s);
+  g.rotation.y = rnd() * Math.PI * 2;
+  return g;
+}
+function dock() {
+  const g = new THREE.Group();
+  // deck corre na direção +X (radial) — curto (19..22) para não invadir a rota do barco (r=24)
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.18, 1.1), mat(0x7a5a33));
+  deck.position.set(20.5, 0.45, 0);
+  deck.castShadow = true;
+  g.add(deck);
+  for (const px of [19.2, 21.8]) for (const pz of [-0.45, 0.45]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 1.8, 5), mat(0x5a3b16));
+    post.position.set(px, -0.5, pz);
+    g.add(post);
+  }
+  return g;
+}
+
+// Populando a ilha principal
+// Pinheiros NA grama (topo y = 0.1)
+const PINE_GRASS = [
+  [12, 2], [13, -4], [8, -10], [-13, 1], [-6, 12], [5, 14], [11, 7], [-12, 8], [7, 9], [-2, 6],
+];
+PINE_GRASS.forEach(([x, z]) => island.add(tree(x, z, 1, 0.1)));
+
+// Pinheiros na faixa de areia (topo y = -0.4)
+const PINE_SAND = [[-11, 11], [14, 8], [14, 12], [-14, -7]];
+PINE_SAND.forEach(([x, z]) => island.add(tree(x, z, 0.9, -0.4)));
+
+// Palmeiras na beira da praia (raio ~17)
+[[15.4, 7.2], [-7.4, 15.8], [-17.4, -1.5], [-2.2, -16.8], [8.75, 15.16]]
+  .forEach(([x, z], i) => island.add(palm(x, z, 1, -0.4)));
+
+// Moitas espalhadas na grama
+[[2, 4], [-8, -8], [10, -6], [6, -12], [-12, -2], [-2, -12]]
+  .forEach(([x, z]) => island.add(bush(x, z, 1, 0.1)));
+
+// Cabana + deque
+island.add(house(-12, 4, 1));
+island.add(dock());
+
+// Pedras espalhadas
+for (let i = 0; i < 10; i++) {
+  const a = rnd() * Math.PI * 2, r = 5 + rnd() * 12;
+  const s = 0.4 + rnd() * 0.9;
+  const stone = new THREE.Mesh(new THREE.DodecahedronGeometry(s), mat(COL.rockGray));
+  stone.position.set(Math.cos(a) * r, s * 0.4, Math.sin(a) * r);
+  stone.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
+  stone.castShadow = true;
+  island.add(stone);
+}
+
+// ---------- O arquipélago: 8 ilhas menores ----------
+const floaters = []; // { obj, ph, amp } — flutuação suave de cada ilha
+const islandRefs = { A: null, B: null, C: null }; // ilhas que vão receber portos
+
+function smallBase(r, depth, color = COL.rock) {
+  const g = new THREE.Group();
+  const rock = jaggedRockMesh(r * 1.05, depth, 7, 2, color);
+  rock.position.y = -0.45 - depth / 2;
+  g.add(rock);
+  return g;
+}
+function flatGround(parent, r, top, color, h = 1.1, sides = 7) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 0.96, h, sides), mat(color));
+  m.position.y = top - h / 2;
+  m.castShadow = true; m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+function registerFloat(obj, amp = 0.18) {
+  obj.userData.ph = rnd() * Math.PI * 2;
+  obj.userData.amp = amp;
+  floaters.push(obj);
+}
+
+// --- Ilha A: palmeiras (r=6) ---
+{
+  const g = new THREE.Group();
+  g.add(smallBase(6.5, 6));
+  flatGround(g, 6, -0.2, COL.sand);
+  [[1.5, 2.5], [-2, 1], [0.5, -2.5], [3, -1.5]].forEach(([x, z]) => g.add(palm(x, z, 0.9, -0.2)));
+  const sh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5), mat(COL.rockGray));
+  sh.position.set(-3, -0.05, -3); sh.rotation.y = 1.2; sh.castShadow = true;
+  g.add(sh);
+  islandRefs.A = g;
+  g.position.set(52, 0, -38);
+  registerFloat(g, 0.15);
+  scene.add(g);
+}
+// --- Ilha B: rochosa + farol com feixe (r=5.5) ---
+let lighthouseBeamGroup = null;
+let lighthouseLampMat = null;
+{
+  const g = new THREE.Group();
+  g.add(smallBase(6, 5.5, 0x6f6f6f));
+  flatGround(g, 5.5, -0.2, 0x8b8f94);
+  // rochinhas
+  [[-3, -2, 0.6], [3.5, -2.5, 0.5], [-2, 3, 0.45]].forEach(([x, z, s]) => {
+    const r = new THREE.Mesh(new THREE.DodecahedronGeometry(s), mat(COL.rockGray));
+    r.position.set(x, z * 0 + -0.05, z); r.rotation.set(rnd() * 3, rnd() * 3, 0); r.castShadow = true;
+    g.add(r);
+  });
+  // Farol
+  const lh = new THREE.Group();
+  const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.2, 4, 8), mat(0xf2f0e6));
+  tower.position.y = 2; tower.castShadow = true;
+  lh.add(tower);
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 0.25, 8), mat(0xb8433a));
+  cap.position.y = 4.95;
+  lh.add(cap);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(1.0, 0.9, 8), mat(0xb8433a));
+  roof.position.y = 5.45; roof.castShadow = true;
+  lh.add(roof);
+  const glass = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.5, 0.5, 0.8, 8),
+    new THREE.MeshStandardMaterial({ color: 0xbfe8ff, transparent: true, opacity: 0.5, flatShading: true })
+  );
+  glass.position.y = 4.4;
+  lh.add(glass);
+  lighthouseLampMat = new THREE.MeshStandardMaterial({ color: 0xffe9a8, emissive: 0xffd27a, emissiveIntensity: 1.5 });
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 8), lighthouseLampMat);
+  lamp.position.y = 4.4;
+  lh.add(lamp);
+  // feixe rotativo (cone aberto ao longo de +X, girando em y)
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.4, 2.2, 10, 10, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.22, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false })
+  );
+  beam.position.x = 5;
+  beam.rotation.z = Math.PI / 2;
+  lighthouseBeamGroup = new THREE.Group();
+  lighthouseBeamGroup.position.y = 4.4;
+  lighthouseBeamGroup.add(beam);
+  lh.add(lighthouseBeamGroup);
+  lh.position.y = -0.2;
+  g.add(lh);
+  islandRefs.B = g;
+  g.position.set(-48, 0, 42);
+  registerFloat(g, 0.18);
+  scene.add(g);
+}
+// --- Ilha C: colina com montanhinha (r=8) ---
+{
+  const g = new THREE.Group();
+  g.add(smallBase(8.5, 7));
+  flatGround(g, 8, -0.2, COL.grass);
+  const m = new THREE.Mesh(new THREE.ConeGeometry(4.5, 5, 6), mat(0x7c9b5b));
+  m.position.y = 2.3; m.castShadow = true;
+  g.add(m);
+  [[-4, 2], [3, 4], [5, -3]].forEach(([x, z]) => g.add(tree(x, z, 0.8, -0.2)));
+  [[-5, -3], [2, -4], [-2, 5]].forEach(([x, z]) => g.add(bush(x, z, 0.9, -0.2)));
+  islandRefs.C = g;
+  g.position.set(60, 0, 25);
+  registerFloat(g, 0.2);
+  scene.add(g);
+}
+// --- Ilha D: barra de areia (r=4.5) ---
+{
+  const g = new THREE.Group();
+  g.add(smallBase(5, 3.5));
+  flatGround(g, 4.5, -0.25, COL.sand);
+  [[-2, 1, 0.5], [2.5, -1.5, 0.4]].forEach(([x, z, s]) => {
+    const r = new THREE.Mesh(new THREE.DodecahedronGeometry(s), mat(COL.rockGray));
+    r.position.set(x, -0.1, z); r.rotation.y = rnd() * 3; r.castShadow = true;
+    g.add(r);
+  });
+  g.position.set(-25, 0, 70);
+  registerFloat(g, 0.12);
+  scene.add(g);
+}
+// --- Ilha E: vulcão (mais polígonos) — cuspe lava e fumaça quando clicado ---
+const smokes = [];
+let volcanoG = null;      // group da ilha (alvo do raycast)
+let craterMat = null;    // lava incandescente na cratera
+let craterLight = null;  // PointLight na cratera
+let eruption = 0;         // segundos restantes de erupção
+
+// lava em voo (Points aditivos)
+const LAVA_MAX = 160;
+const lavaPts = {
+  pos: new Float32Array(LAVA_MAX * 3),
+  vel: new Float32Array(LAVA_MAX * 3),
+  life: new Float32Array(LAVA_MAX),
+  cursor: 0,
+  points: null,
+};
+{
+  const gg = new THREE.BufferGeometry();
+  gg.setAttribute('position', new THREE.BufferAttribute(lavaPts.pos, 3));
+  const p = new THREE.Points(gg, new THREE.PointsMaterial({
+    color: 0xff6b1f, size: 0.6, transparent: true, opacity: 0.95,
+    depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
+  }));
+  p.frustumCulled = false;
+  p.renderOrder = 5;
+  scene.add(p);
+  lavaPts.points = p;
+  for (let i = 0; i < LAVA_MAX; i++) lavaPts.pos[i * 3 + 1] = -9999;
+}
+function spawnLava(cx, cy, cz) {
+  const idx = lavaPts.cursor = (lavaPts.cursor + 1) % LAVA_MAX;
+  const i3 = idx * 3;
+  const a = Math.random() * Math.PI * 2, rr = Math.random() * 1.3;
+  lavaPts.pos[i3]     = cx + Math.cos(a) * rr;
+  lavaPts.pos[i3 + 1] = cy + Math.random() * 0.4;
+  lavaPts.pos[i3 + 2] = cz + Math.sin(a) * rr;
+  const up = 6.5 + Math.random() * 5;
+  lavaPts.vel[i3]     = Math.cos(a) * (0.6 + Math.random() * 2.0);
+  lavaPts.vel[i3 + 1] = up;
+  lavaPts.vel[i3 + 2] = Math.sin(a) * (0.6 + Math.random() * 2.0);
+  lavaPts.life[idx] = 2 + Math.random() * 1.6;
+}
+
+// fumaça da erupção: pool de puffs que sobem, crescem e somem
+const puffs = [];
+for (let i = 0; i < 14; i++) {
+  const puf = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.8, 1),
+    new THREE.MeshStandardMaterial({ color: 0x8d949c, roughness: 1, transparent: true, opacity: 0, flatShading: true })
+  );
+  puf.userData.state = { active: false };
+  scene.add(puf);
+  puffs.push(puf);
+}
+function spawnPuff(x, y, z) {
+  for (const m of puffs) {
+    if (!m.userData.state.active) {
+      m.userData.state = {
+        active: true,
+        t: 0, dur: 2.2 + Math.random() * 1.8,
+        vx: (Math.random() - 0.5) * 1.2,
+        vy: 1.6 + Math.random() * 1.4,
+        vz: (Math.random() - 0.5) * 1.2,
+      };
+      m.position.set(x, y, z);
+      m.scale.setScalar(0.8 + Math.random() * 0.8);
+      return;
+    }
+  }
+}
+function volcanoErupt() {
+  eruption = 2.2;
+  const vp = volcanoG.position;
+  for (let i = 0; i < 26; i++) spawnLava(vp.x, vp.y + 7.3, vp.z);
+  for (let i = 0; i < 5; i++) spawnPuff(vp.x, vp.y + 7.6, vp.z);
+}
+
+{
+  const g = new THREE.Group();
+  g.add(smallBase(7.5, 6.5, 0x6b5d4a));
+  flatGround(g, 7, -0.2, COL.dirt);
+  // cone com MUITOS mais polígonos (48 radiais × 6 alturas) + jitter ruidoso
+  const coneGeo = new THREE.ConeGeometry(6.5, 8, 48, 6);
+  const cp = coneGeo.attributes.position;
+  for (let i = 0; i < cp.count; i++) {
+    const x = cp.getX(i), y = cp.getY(i), z = cp.getZ(i);
+    const h = (y + 4) / 8; // 0 = base ... 1 = pico (pico fica mais limpo)
+    const jitter = 1 + (rnd() - 0.5) * 0.18 * (1 - h * 0.5);
+    cp.setXYZ(i, x * jitter, y, z * jitter);
+  }
+  coneGeo.computeVertexNormals();
+  const cone = new THREE.Mesh(coneGeo, mat(0x7a6f5a));
+  cone.position.y = 3.8; cone.castShadow = true;
+  g.add(cone);
+  const crater = new THREE.Mesh(new THREE.CylinderGeometry(2, 1.8, 0.9, 8), mat(0x3a3a3a));
+  crater.position.y = 7.9;
+  g.add(crater);
+  // "piscina" de lava na cratera (brilha)
+  craterMat = new THREE.MeshStandardMaterial({
+    color: 0x3a2010, emissive: 0xff4400, emissiveIntensity: 1.1, roughness: 1, flatShading: true,
+  });
+  const lavaPool = new THREE.Mesh(new THREE.CircleGeometry(1.7, 28), craterMat);
+  lavaPool.rotation.x = -Math.PI / 2;
+  lavaPool.position.y = 7.55;
+  g.add(lavaPool);
+  craterLight = new THREE.PointLight(0xff6a20, 1.2, 40, 2);
+  craterLight.position.set(0, 8, 0);
+  g.add(craterLight);
+  // hitbox invisível p/ "tocar" o vulcão
+  const hit = new THREE.Mesh(new THREE.ConeGeometry(7.5, 9.5, 8));
+  hit.position.y = 4.4;
+  hit.visible = false; // raycast continua funcionando
+  g.add(hit);
+  for (let i = 0; i < 3; i++) {
+    const sm = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.8, 0),
+      new THREE.MeshStandardMaterial({ color: 0x9aa4ae, roughness: 1, transparent: true, opacity: 0.5, flatShading: true })
+    );
+    sm.userData.ph = i / 3;
+    g.add(sm);
+    smokes.push(sm);
+  }
+  g.position.set(-70, 0, -40);
+  registerFloat(g, 0.22);
+  scene.add(g);
+  volcanoG = g;
+}
+// --- Ilha F: moitas + 1 árvore (r=5) ---
+{
+  const g = new THREE.Group();
+  g.add(smallBase(5.5, 5));
+  flatGround(g, 5, -0.2, COL.grass);
+  [[-2, 1], [2, -2], [3, 2], [-1, -3]].forEach(([x, z]) => g.add(bush(x, z, 0.9, -0.2)));
+  g.add(tree(0.5, 1, 0.9, -0.2));
+  [[-3, -2], [3, 3]].forEach(([x, z]) => {
+    const r = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5), mat(COL.rockGray));
+    r.position.set(x, -0.1, z); r.rotation.y = rnd() * 3; r.castShadow = true;
+    g.add(r);
+  });
+  g.position.set(30, 0, 62);
+  registerFloat(g, 0.16);
+  scene.add(g);
+}
+// --- Ilha G: promontório rochoso (r=4.5) ---
+{
+  const g = new THREE.Group();
+  g.add(smallBase(5, 4.5, 0x6f6f6f));
+  flatGround(g, 4.5, -0.2, 0x8b8f94);
+  [[0, 0, 1.2], [-1.5, 1, 0.8], [1.5, -1, 0.6]].forEach(([x, z, s]) => {
+    const r = new THREE.Mesh(new THREE.DodecahedronGeometry(s), mat(COL.rockGray));
+    r.position.set(x, s * 0.3, z); r.rotation.set(rnd() * 2, rnd() * 2, rnd()); r.castShadow = true;
+    g.add(r);
+  });
+  g.position.set(10, 0, -78);
+  registerFloat(g, 0.14);
+  scene.add(g);
+}
+// --- Ilha H: areia com mais palmeiras (r=5) ---
+{
+  const g = new THREE.Group();
+  g.add(smallBase(5.5, 5));
+  flatGround(g, 5, -0.2, COL.sand);
+  [[1.5, 1.5, 0.8], [-1.5, -1, 0.9]].forEach(([x, z, s]) => g.add(palm(x, z, s, -0.2)));
+  [[-2.5, 2.5], [2.5, -2.5]].forEach(([x, z]) => {
+    const r = new THREE.Mesh(new THREE.DodecahedronGeometry(0.4), mat(COL.rockGray));
+    r.position.set(x, -0.1, z); r.rotation.y = rnd() * 3; r.castShadow = true;
+    g.add(r);
+  });
+  g.position.set(-60, 0, -72);
+  registerFloat(g, 0.17);
+  scene.add(g);
+}
+
+// ---------- Cabaça (barquinho) ----------
+function boat() {
+  const g = new THREE.Group();
+  const hull = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 0.6, 1.4, 7, 1, true), mat(0x9c6228));
+  hull.castShadow = true;
+  g.add(hull);
+  const deck = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 0.2, 7), mat(0x744720));
+  deck.position.y = 0.7; g.add(deck);
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.6, 5), mat(0x5a3b16));
+  mast.position.y = 2; g.add(mast);
+  const sail = new THREE.Mesh(new THREE.ConeGeometry(0.9, 1.6, 4), mat(0xf5f0e1));
+  sail.position.set(0.4, 2, 0); sail.rotation.z = Math.PI / 2;
+  sail.castShadow = true; g.add(sail);
+  return g;
+}
+const boat1 = boat(); scene.add(boat1);
+const boat2 = boat(); scene.add(boat2);
+
+// ---------- Portos: um em cada uma das ilhas A (palmeiras), B (farol) e C (montanha) ----------
+function makePort(group, r, color) {
+  const dirV = new THREE.Vector3(-group.position.x, 0, -group.position.z).normalize(); // píer voltado p/ o centro (onde passam as rotas)
+  const p = new THREE.Group();
+  p.rotation.y = Math.atan2(-dirV.z, dirV.x); // local +X → dirV
+  // píer
+  const pier = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.18, 1.2), mat(0x8a5a33));
+  pier.position.set(r + 0.7, 0.15, 0); pier.castShadow = true;
+  p.add(pier);
+  for (const px of [r - 0.7, r + 2.1]) for (const pz of [-0.5, 0.5]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1.9, 5), mat(0x5a3b16));
+    post.position.set(px, -0.7, pz);
+    p.add(post);
+  }
+  // cabaninha do porto na margem
+  const cabinG = new THREE.Group();
+  const cBase = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.1, 1.3), mat(0xc9a86b));
+  cBase.position.y = 0.55; cBase.castShadow = true;
+  const cRoof = new THREE.Mesh(new THREE.ConeGeometry(1.3, 0.9, 4), mat(0x8a4030));
+  cRoof.position.y = 1.5; cRoof.rotation.y = Math.PI / 4; cRoof.castShadow = true;
+  cabinG.add(cBase, cRoof);
+  cabinG.position.set(r - 1.0, 0.05, 2.1);
+  cabinG.rotation.y = rnd() * 0.4;
+  p.add(cabinG);
+  // mastro + bandeira colorida no fim do píer
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.8, 5), mat(0xd9d2c5));
+  pole.position.set(r + 2.4, 1.55, 0); pole.castShadow = true;
+  const flag = new THREE.Mesh(
+    new THREE.BoxGeometry(0.85, 0.5, 0.06),
+    new THREE.MeshStandardMaterial({ color, flatShading: true, side: THREE.DoubleSide, roughness: 0.8, emissive: color, emissiveIntensity: 0.3 })
+  );
+  flag.position.set(r + 2.85, 2.35, 0);
+  p.add(pole, flag);
+  // boias coloridas marcando o canal de acesso (balançam na água)
+  const buoys = [];
+  const bMat = new THREE.MeshStandardMaterial({ color, flatShading: true, emissive: color, emissiveIntensity: 0.5, roughness: 0.7 });
+  for (const [bx, bz, ph] of [[r + 1.0, 1.5, 0], [r + 1.0, -1.5, 2], [r - 0.4, 1.9, 4]]) {
+    const bu = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.8, 6), bMat);
+    bu.position.set(bx, 0, bz);
+    p.add(bu);
+    buoys.push({ m: bu, ph });
+  }
+  // referência p/ onde o barco faz a atracação (a ilha flutua; le mundo via getWorldPosition)
+  const dock = new THREE.Object3D();
+  dock.position.set(r + 3.6, 0, 0);
+  p.add(dock);
+  group.add(p);
+  return { dock, dir: dirV, buoys, flag };
+}
+
+const portDefs = [
+  makePort(islandRefs.A, 6.5, 0xef4444), // Porto 1 — Ilha A (palmeiras)
+  makePort(islandRefs.B, 5.5, 0x3b82f6), // Porto 2 — Ilha B (farol)
+  makePort(islandRefs.C, 8.0, 0x22c55e), // Porto 3 — Ilha C (montanha)
+];
+
+// ---------- Rotas dos barcos: porto → porto (toda a malha é A→B→C→A...) ----------
+// A via (24.7, 24.7) só na perna A→B: contorna a ilha principal com folga
+const VIA = { 0: [[24.7, 24.7]], 1: [], 2: [] };
+function buildRoute(home) { // targets cíclicos: vias + portos de destino
+  const t = [];
+  for (let k = 0; k < 3; k++) {
+    const from = (home + k) % 3, to = (home + k + 1) % 3;
+    (VIA[from] || []).forEach((v) => t.push({ kind: 'via', x: v[0], z: v[1] }));
+    t.push({ kind: 'port', port: to });
+  }
+  return t;
+}
+const _routePos = new THREE.Vector3();
+function targetWorld(t) {
+  if (t.kind === 'via') return _routePos.set(t.x, -0.7, t.z);
+  return portDefs[t.port].dock.getWorldPosition(_routePos);
+}
+
+const boats = [];
+for (let i = 0; i < 3; i++) {
+  const b = {
+    obj: i === 0 ? boat1 : i === 1 ? boat2 : boat(),
+    home: i, state: 'dock', curPort: i, ti: 0, speed: 8,
+    timer: i * 13, // barcos 2 e 3 só partem depois — ficariam amontoados na rota
+    phase: i * 2.1,
+  };
+  b.targets = buildRoute(i);
+  if (i === 2) scene.add(b.obj);
+  b.obj.position.y = -0.7;
+  b.obj.scale.setScalar(1.2);
+  // esfera invisível p/ facilitar "agarra" (touch e mouse)
+  const hit = new THREE.Mesh(new THREE.SphereGeometry(2.6, 8, 8));
+  hit.position.y = 1;
+  hit.visible = false; // o raycast continua funcionando mesmo com visible=false
+  b.obj.add(hit);
+  b.obj.userData.boat = b;
+  // começa atracado no próprio porto (píer), olhando p/ ilha
+  const spot = portDefs[i].dock.getWorldPosition(new THREE.Vector3());
+  spot.y = -0.7;
+  b.obj.position.copy(spot);
+  b.obj.rotation.y = Math.atan2(portDefs[i].dir.z, -portDefs[i].dir.x);
+  boats.push(b);
+}
+
+// ---------- Peixes (cardumes) ----------
+// geometrias compartilhadas p/ não duplicar memória nos cardumes
+const fBodyGeo = new THREE.IcosahedronGeometry(0.5, 1);
+const fDorsalGeo = new THREE.ConeGeometry(0.22, 0.5, 4);
+const fTailGeo = new THREE.ConeGeometry(0.32, 0.6, 4);
+
+function makeFish(color, accent, size = 1) {
+  const g = new THREE.Group();
+  const mBody = mat(color);
+  const mFin = mat(accent);
+  // corpo low-poly (nariz apontando p/ +Z, coerente com Object3D.lookAt)
+  const body = new THREE.Mesh(fBodyGeo, mBody);
+  body.scale.set(0.72, 0.8, 1.5);
+  body.castShadow = true;
+  g.add(body);
+  // barbatana dorsal
+  const dorsal = new THREE.Mesh(fDorsalGeo, mFin);
+  dorsal.position.set(0, 0.5, 0.1);
+  g.add(dorsal);
+  // cauda num pivot p/ poder bater de um lado pra outro
+  const tailPivot = new THREE.Group();
+  tailPivot.position.set(0, 0, -0.75);
+  const tail = new THREE.Mesh(fTailGeo, mFin);
+  tail.rotation.x = -Math.PI / 2; // ponta p/ -Z (atrás)
+  tail.scale.set(1, 1, 0.3);
+  tailPivot.add(tail);
+  g.add(tailPivot);
+  g.scale.setScalar(size);
+  g.userData.tailPivot = tailPivot;
+  return g;
+}
+
+// um "cardume" = N peixes seguindo a MESMA rota numa formação frouxa
+// (offsets: lx = lateral, ly = vertical, lz = para trás ao longo do caminho)
+const schools = [];
+function makeSchool({ color, accent, size, count, speed, path, t0 }) {
+  const school = { speed, path, t: t0, members: [] };
+  for (let i = 0; i < count; i++) {
+    school.members.push({
+      grp: makeFish(color, accent, size * (0.85 + rnd() * 0.3)),
+      lx: (rnd() - 0.5) * 3.4,              // espalhado lateral
+      ly: (rnd() - 0.5) * 1.3,              // espalhado vertical
+      lz: -i * (0.30 + rnd() * 0.28),       // cada um um pouco atrás (coluna frouxa)
+      wob: rnd() * Math.PI * 2,             // fase de "vagalume" individual
+    });
+  }
+  schools.push(school);
+  school.members.forEach((m) => scene.add(m.grp));
+}
+
+makeSchool({ color: 0xffb347, accent: 0xff7a2f, size: 1.1, count: 12, speed: 0.55, t0: rnd() * 10,
+  // órbita circular clássica (fora da ilha: r ≥ 30)
+  path: (t) => { const a = t; return new THREE.Vector3(Math.cos(a) * 34, -1.75 + Math.sin(t * 3) * 0.2, Math.sin(a) * 34); } });
+makeSchool({ color: 0x67e0ff, accent: 0x2b8fc9, size: 1.05, count: 10, speed: -0.4, t0: rnd() * 10,
+  // elipse achatada, sentido contrário
+  path: (t) => new THREE.Vector3(Math.cos(t) * 42, -1.6 + Math.sin(t * 2.4) * 0.18, Math.sin(t) * 34) });
+makeSchool({ color: 0xffd93d, accent: 0xe08b00, size: 1.35, count: 14, speed: 0.7, t0: rnd() * 10,
+  // "pulso" circular — o raio respira, deixando um traço mais "∞" sem cruzar a ilha
+  path: (t) => {
+    const r = 38 + Math.sin(t * 2) * 6;
+    return new THREE.Vector3(Math.cos(t) * r, -1.9 + Math.sin(t * 2.8) * 0.15, Math.sin(t) * r);
+  } });
+makeSchool({ color: 0xc98bff, accent: 0x8a4fd6, size: 1.05, count: 10, speed: 0.32, t0: rnd() * 10,
+  // "espiral preguiçosa": raio respira devagar, mais fundo
+  path: (t) => {
+    const r = 46 + Math.sin(t * 0.5) * 6;
+    return new THREE.Vector3(Math.cos(t) * r, -2.2 + Math.sin(t * 1.7) * 0.2, Math.sin(t) * r);
+  } });
+
+const _upV = new THREE.Vector3(0, 1, 0);
+const _dirV = new THREE.Vector3();
+const _sideV = new THREE.Vector3();
+const _prevV = new THREE.Vector3();
+function updateFish(dt, et) {
+  for (const sc of schools) {
+    sc.t += dt * sc.speed;
+    // tangente da rota (diferença finita) — define o frame local do cardume
+    const p0x = sc.path(sc.t);
+    const p1x = sc.path(sc.t + 0.06);
+    _dirV.copy(p1x).sub(p0x).normalize();
+    _sideV.crossVectors(_dirV, _upV); // lateral (se for ~0, fallback p/ +X)
+    if (_sideV.lengthSq() < 1e-6) _sideV.set(1, 0, 0); else _sideV.normalize();
+    for (const m of sc.members) {
+      const wob = Math.sin(et * 1.4 + m.wob) * 0.35; // "vagalume" lateral
+      m.grp.position.set(
+        p0x.x + _sideV.x * (m.lx + wob) + _dirV.x * m.lz,
+        p0x.y + m.ly + Math.sin(et * 2 + m.wob) * 0.1,
+        p0x.z + _sideV.z * (m.lx + wob) + _dirV.z * m.lz
+      );
+      // direção = tangente (olhar na frente, na altura do próprio peixe)
+      m.grp.lookAt(p0x.x + _dirV.x, m.grp.position.y, p0x.z + _dirV.z);
+      // inclinação leve nas curvas + batida da cauda
+      m.grp.rotateZ(Math.sin(et * 1.6 + m.grp.scale.x * 5) * 0.08);
+      m.grp.userData.tailPivot.rotation.y = Math.sin(et * 9 * m.grp.scale.x + m.wob) * 0.35;
+    }
+  }
+}
+
+// ---------- Tubarões, Baleia gigante e Embarcação ----------
+const sharkFinGeo = new THREE.ConeGeometry(0.3, 0.8, 4);
+const sharkTailGeo = new THREE.ConeGeometry(0.32, 0.9, 4);
+const sharkPfinGeo = new THREE.ConeGeometry(0.2, 0.55, 3);
+const sharkEyeGeo = new THREE.SphereGeometry(0.06, 4, 4);
+
+function makeShark(size = 1) {
+  const g = new THREE.Group();
+  const mBody = mat(0x5b7c8c), mFin = mat(0x3f5a6e), mEye = mat(0x111820);
+  const body = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), mBody);
+  body.scale.set(0.55, 0.5, 1.5);
+  body.castShadow = true;
+  g.add(body);
+  // barbatana dorsal (o pico que corta a superfície)
+  const dorsal = new THREE.Mesh(sharkFinGeo, mFin);
+  dorsal.position.set(0, 0.42, -0.1);
+  dorsal.scale.z = 0.22;
+  g.add(dorsal);
+  // cauda num pivot p/ bater de um lado pra outro
+  const tailPivot = new THREE.Group();
+  tailPivot.position.set(0, 0.08, -1.1);
+  const tail = new THREE.Mesh(sharkTailGeo, mFin);
+  tail.position.y = 0.3; tail.scale.z = 0.22; tail.castShadow = true;
+  tailPivot.add(tail);
+  g.add(tailPivot);
+  // barbatanas peitorais
+  for (const s of [-1, 1]) {
+    const fin = new THREE.Mesh(sharkPfinGeo, mFin);
+    fin.position.set(s * 0.48, -0.15, 0.35);
+    fin.rotation.z = s * 0.9;
+    fin.rotation.x = 0.5;
+    fin.scale.z = 0.3;
+    g.add(fin);
+  }
+  // olhos
+  for (const s of [-1, 1]) {
+    const eye = new THREE.Mesh(sharkEyeGeo, mEye);
+    eye.position.set(s * 0.36, 0.12, 0.85);
+    g.add(eye);
+  }
+  g.scale.setScalar(size);
+  g.userData.tailPivot = tailPivot;
+  return g;
+}
+
+const sharks = [];
+function addShark(size, r, speed, yBase, yAmp, phase) {
+  const grp = makeShark(size);
+  scene.add(grp);
+  sharks.push({ grp, r, speed, yBase, yAmp, phase, a: rnd() * Math.PI * 2 });
+}
+// 3 tubarões nadando em círculos (nas margens do mar), com a dorsal às vezes acima d'água
+addShark(1.5, 34, 0.50, -1.4, 0.85, 0);
+addShark(1.2, 42, 0.36, -1.6, 0.80, 2.1);
+addShark(1.8, 52, 0.28, -1.3, 0.95, 4.2);
+
+function updateSharks(dt, et) {
+  for (const s of sharks) {
+    s.a += dt * s.speed;
+    const a = s.a;
+    const x = Math.cos(a) * s.r, z = Math.sin(a) * s.r;
+    const y = s.yBase + Math.sin(et * 0.7 + s.phase) * s.yAmp;
+    s.grp.position.set(x, y, z);
+    // frente = tangente da órbita (sentido anti-horário)
+    const dx = -Math.sin(a), dz = Math.cos(a);
+    s.grp.lookAt(x + dx, y, z + dz);
+    s.grp.rotateZ(Math.sin(et * 1.1 + s.phase) * 0.07); // rolagem na curva
+    s.grp.userData.tailPivot.rotation.y = Math.sin(et * 11 + s.phase) * 0.45; // "natação"
+  }
+}
+
+// --- Baleia gigante (submersa, sobe e quebra a superfície de vez em quando) ---
+const whaleG = new THREE.Group();
+const blows = []; // puffs de "jato de água" (pool)
+{
+  const mSkin = mat(0x3d5a78), mPale = mat(0xd8cfc0);
+  // corpo: elipsoide suave (8x6 = low poly, mas contorno arredondado)
+  const body = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), mSkin);
+  body.scale.set(1.0, 0.8, 2.3);
+  body.castShadow = true;
+  whaleG.add(body);
+  // barriga pálida por baixo
+  const belly = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), mPale);
+  belly.scale.set(0.95, 0.5, 1.4);
+  belly.position.set(0, -0.55, 0.15);
+  whaleG.add(belly);
+  // focinho arredondado (nariz)
+  const head = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), mSkin);
+  head.scale.set(0.75, 0.55, 0.95);
+  head.position.set(0, 0.1, 1.95);
+  head.castShadow = true;
+  whaleG.add(head);
+  // olhos pequenos perto do focinho
+  const mEye = mat(0x101820);
+  for (const s of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.05, 4, 4), mEye);
+    eye.position.set(s * 0.55, 0.28, 2.35);
+    whaleG.add(eye);
+  }
+  // nadadeiras peitorais (flipper) apontando pra fora + trás
+  for (const s of [-1, 1]) {
+    const fin = new THREE.Mesh(new THREE.ConeGeometry(0.22, 1.0, 4), mSkin);
+    fin.position.set(s * 0.45, -0.5, 0.9);
+    fin.rotation.set(-0.5, 0, -s * 1.7);
+    fin.scale.set(0.7, 1, 0.35);
+    whaleG.add(fin);
+  }
+  // cauda: pedúnculo afunilando + flukes (asas) laterais pra trás — varredura vertical real
+  const tailPivotG = new THREE.Group();
+  tailPivotG.position.set(0, 0, -2.0);
+  const pec = new THREE.Mesh(new THREE.SphereGeometry(1, 6, 5), mSkin);
+  pec.scale.set(0.5, 0.42, 1.2);
+  pec.position.set(0, 0, -0.5);
+  tailPivotG.add(pec);
+  const flukeGeo = new THREE.ConeGeometry(0.55, 1.5, 4);
+  flukeGeo.scale(0.3, 1, 1); // asa larga em y, fina em x
+  for (const s of [-1, 1]) {
+    const fluke = new THREE.Mesh(flukeGeo, mSkin);
+    fluke.position.set(s * 0.45, 0, -0.9);
+    fluke.rotation.z = -s * (Math.PI / 2); // direita: ponta +X; esquerda: ponta -X
+    fluke.castShadow = true;
+    tailPivotG.add(fluke);
+  }
+  whaleG.add(tailPivotG);
+  whaleG.userData.tail = tailPivotG;
+  whaleG.scale.setScalar(2.0);
+  scene.add(whaleG);
+}
+function spawnBlow(x, y, z) {
+  for (const m of blows) {
+    if (!m.userData.state.active) {
+      m.userData.state = {
+        active: true, t: 0, dur: 1.3 + Math.random(),
+        vx: (Math.random() - 0.5) * 0.6, vy: 2.2 + Math.random(), vz: (Math.random() - 0.5) * 0.6,
+      };
+      m.position.set(x, y, z);
+      m.scale.setScalar(0.8 + Math.random() * 0.6);
+      return;
+    }
+  }
+}
+for (let i = 0; i < 6; i++) {
+  const m = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.7, 1),
+    new THREE.MeshStandardMaterial({ color: 0xeaf6ff, transparent: true, opacity: 0, roughness: 1, flatShading: true })
+  );
+  m.userData.state = { active: false };
+  scene.add(m);
+  blows.push(m);
+}
+const whale = { t: rnd() * 40, speed: 0.045, R: 48, y0: -4.4, amp: 3.0, prevY: -99 };
+function updateWhale(dt, et) {
+  whale.t += dt * whale.speed;
+  const a = whale.t;
+  const r = whale.R + Math.sin(whale.t * 0.5) * 6;
+  const y = whale.y0 + Math.sin(whale.t * 0.8) * whale.amp;
+  // direção por diferença finita (raio da órbita "respira")
+  const a2 = whale.t + 0.2;
+  const r2 = whale.R + Math.sin(a2 * 0.5) * 6;
+  const dx = Math.cos(a2) * r2 - Math.cos(a) * r;
+  const dz = Math.sin(a2) * r2 - Math.sin(a) * r;
+  const x = Math.cos(a) * r, z = Math.sin(a) * r;
+  whaleG.position.set(x, y, z);
+  whaleG.lookAt(x + dx, y, z + dz);
+  whaleG.userData.tail.rotation.z = Math.sin(et * 1.6) * 0.35; // flukes varrendo lateral (um sobe, outro desce)
+  // jato de água quando quebra a superfície (cruzamento de cima p/baixo: y > -1.8)
+  if (y > -1.8 && whale.prevY <= -1.8) spawnBlow(x, -0.5, z);
+  whale.prevY = y;
+  // puffs do jato sobem, crescem e somem
+  for (const m of blows) {
+    const st = m.userData.state;
+    if (!st.active) continue;
+    st.t += dt;
+    const k = st.t / st.dur;
+    if (k >= 1) { st.active = false; m.material.opacity = 0; continue; }
+    m.position.x += st.vx * dt;
+    m.position.y += st.vy * dt;
+    m.position.z += st.vz * dt;
+    st.vy += dt * 1.2;
+    m.scale.setScalar(m.scale.x + dt * (1.4 + k));
+    m.rotation.y += dt;
+    m.material.opacity = (1 - k) * 0.8;
+  }
+}
+
+// --- Grande embarcação navegante (3 mastros, velas e bandeira) ---
+function bigShip() {
+  const g = new THREE.Group();
+  const woodD = mat(0x6e4222), woodL = mat(0x8a5a33), mastM = mat(0x9a7440);
+  const sailM = new THREE.MeshStandardMaterial({ color: 0xf2ead6, side: THREE.DoubleSide, roughness: 0.95, flatShading: true });
+  const flagM = mat(0xd64545);
+  // casco: cilindro de 4 lados deitado no Z (ponta +Z = proa), levemente afunilando pra popa
+  const hull = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.1, 9, 4, 1), woodD);
+  hull.rotation.x = Math.PI / 2;
+  hull.scale.set(1.35, 1.15, 1.35);
+  hull.position.y = -0.2;
+  hull.castShadow = true;
+  g.add(hull);
+  // proa afiada
+  const bow = new THREE.Mesh(new THREE.ConeGeometry(1.6, 4.2, 4), woodD);
+  bow.rotation.x = Math.PI / 2;
+  bow.scale.set(1.1, 1.1, 1.05);
+  bow.position.set(0, -0.35, 6.6);
+  bow.castShadow = true;
+  g.add(bow);
+  // convés + parte da frente
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.35, 7.2), woodL);
+  deck.position.y = 0.7; deck.castShadow = true;
+  g.add(deck);
+  const bowDeck = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.3, 2.2), woodL);
+  bowDeck.position.set(0, 0.75, 4.1);
+  g.add(bowDeck);
+  // castelo de popa (cabinas + telhado)
+  const stern = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.1, 1.3), woodL);
+  stern.position.set(0, 1.5, -3.3); stern.castShadow = true;
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.18, 1.5), mat(0x8a4030));
+  roof.position.set(0, 2.1, -3.3); roof.castShadow = true;
+  g.add(stern, roof);
+  // função auxiliar: mastro + vergas + velas quadradas
+  function rig(z, h, yards, sails) {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.14, h, 5), mastM);
+    m.position.set(0, 0.7 + h / 2, z);
+    m.castShadow = true;
+    g.add(m);
+    for (const [yy, len] of yards) {
+      const y = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, len, 5), mastM);
+      y.rotation.z = Math.PI / 2;
+      y.position.set(0, yy, z);
+      g.add(y);
+    }
+    for (const [yy, w, hh] of sails) {
+      const s = new THREE.Mesh(new THREE.BoxGeometry(w, hh, 0.12), sailM);
+      s.position.set(0, yy, z);
+      s.castShadow = true;
+      g.add(s);
+    }
+  }
+  // 3 mastros: de proa, principal, de popa
+  rig(2.6, 8, [[2.4, 3.6], [4.6, 3.2]], [[1.45, 3.4, 1.9], [3.65, 3.0, 1.7]]);
+  rig(-0.4, 10, [[2.8, 5.8], [5.2, 5.4], [7.6, 4.6]], [[1.7, 5.6, 2.2], [4.1, 5.2, 2.2], [6.6, 4.4, 2.0]]);
+  rig(-3.2, 6.5, [[2.4, 3.8], [4.2, 3.4]], [[1.5, 3.6, 1.8], [3.2, 3.2, 1.6]]);
+  // bandeira redonda no toco do principal
+  const flag = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.6, 1.1), flagM);
+  flag.position.set(0, 10.8, -0.9);
+  g.add(flag);
+  // proa (espora) inclinada pra frente
+  const bowsprit = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.08, 4, 5), mastM);
+  bowsprit.position.set(0, 1.3, 7.2);
+  bowsprit.rotation.x = 1.15;
+  g.add(bowsprit);
+  return g;
+}
+const shipG = bigShip();
+scene.add(shipG);
+const ship = { a: rnd() * Math.PI * 2, R: 100, speed: 0.085 };
+shipG.position.set(Math.cos(ship.a) * ship.R, -0.55, Math.sin(ship.a) * ship.R);
+shipG.rotation.y = Math.atan2(-Math.sin(ship.a), Math.cos(ship.a));
+function updateShip(dt, et) {
+  ship.a += dt * ship.speed;
+  const a = ship.a;
+  shipG.position.set(
+    Math.cos(a) * ship.R,
+    -0.55 + Math.sin(et * 0.8) * 0.12,            // balanço suave
+    Math.sin(a) * ship.R
+  );
+  // tangente anti-horária (mesmo sentido dos barquinhos)
+  const want = Math.atan2(-Math.sin(a), Math.cos(a));
+  let dA = want - shipG.rotation.y;
+  dA = Math.atan2(Math.sin(dA), Math.cos(dA));
+  shipG.rotation.y += dA * Math.min(1, dt * 4);
+  shipG.rotation.z = Math.sin(et * 0.7) * 0.03;        // "capotão"
+}
+
+// ---------- Nuvens ----------
+const clouds = [];
+function cloud() {
+  const g = new THREE.Group();
+  const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, flatShading: true });
+  const n = 4 + Math.floor(rnd() * 3);
+  for (let i = 0; i < n; i++) {
+    const s = 0.8 + rnd() * 1.4;
+    const puff = new THREE.Mesh(new THREE.IcosahedronGeometry(s, 0), m);
+    puff.position.set((i - n / 2) * 1.1, rnd() * 0.5, rnd() * 1);
+    g.add(puff);
+  }
+  // puff grande invisível p/ raycast (visible=false ainda intersecta)
+  const puffHit = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 0));
+  puffHit.scale.setScalar(5);
+  puffHit.visible = false;
+  g.add(puffHit);
+  g.scale.setScalar(1 + rnd());
+  g.userData.baseScale = g.scale.x;
+  return g;
+}
+for (let i = 0; i < 12; i++) {
+  const c = cloud();
+  const r = 25 + rnd() * 65;
+  const a = rnd() * Math.PI * 2;
+  c.position.set(Math.cos(a) * r, 10 + rnd() * 9, Math.sin(a) * r);
+  // NAO sobrescreva o userData inteiro: isso apaga o baseScale definido na cloud(),
+  // e faz o lerp do scale virar NaN (a nuvem some). Defina campo a campo.
+  c.userData.r = r;
+  c.userData.a = a;
+  c.userData.speed = 0.02 + rnd() * 0.04;
+  c.userData.bob = rnd() * Math.PI * 2;
+  c.userData.pulse = 0;
+  scene.add(c);
+  clouds.push(c);
+}
+
+// ---------- Estrelas ----------
+let stars;
+{
+  const N = 1200;
+  const pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const v = new THREE.Vector3().randomDirection().multiplyScalar(220 + rnd() * 130);
+    v.y = Math.abs(v.y) * 1.2 - 20; // mantém acima do horizonte na maioria
+    pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
+  }
+  const gg = new THREE.BufferGeometry();
+  gg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  stars = new THREE.Points(gg, new THREE.PointsMaterial({ color: 0xffffff, size: 2.2, transparent: true, opacity: 0.9, sizeAttenuation: true, fog: false, depthWrite: false }));
+  // desenha por último: pontos à frente do sol não podem virar brancos no céu
+  stars.renderOrder = 100;
+  scene.add(stars);
+}
+
+// ---------- Partículas (brilhos) ----------
+let sparkles;
+{
+  const N = 250;
+  const pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const a = rnd() * Math.PI * 2, r = 3 + rnd() * 18;
+    pos[i * 3] = Math.cos(a) * r; pos[i * 3 + 1] = 1 + rnd() * 8; pos[i * 3 + 2] = Math.sin(a) * r;
+  }
+  const gg = new THREE.BufferGeometry();
+  gg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const p = new THREE.Points(gg, new THREE.PointsMaterial({ color: 0xfff2a8, size: 0.35, transparent: true, opacity: 0.8 }));
+  scene.add(p);
+  sparkles = p;
+}
+
+// ---------- Neve interativa ----------
+const SNOW_MAX = 2500;
+const flakes = {
+  pos: new Float32Array(SNOW_MAX * 3),
+  vel: new Float32Array(SNOW_MAX * 3),
+  life: new Float32Array(SNOW_MAX),
+  cursor: 0,
+};
+{
+  const gg = new THREE.BufferGeometry();
+  gg.setAttribute('position', new THREE.BufferAttribute(flakes.pos, 3));
+  const p = new THREE.Points(gg, new THREE.PointsMaterial({
+    color: 0xffffff, size: 0.35, transparent: true, opacity: 0.8,
+    depthWrite: false, // não "borra" a água transparente
+  }));
+  p.frustumCulled = false;
+  // desenha POR CIMA da água (senão o mar cobre os flocos na superfície)
+  p.renderOrder = 10;
+  scene.add(p);
+  flakes.points = p;
+  // começa com tudo "morto" fora da cena (evita bolinha branca na origem)
+  for (let i = 0; i < SNOW_MAX; i++) flakes.pos[i * 3 + 1] = -9999;
+}
+// espalça flocos de uma nuvem (ou de qualquer ponto)
+function puffSnow(x, y, z, n = 60) {
+  for (let i = 0; i < n; i++) {
+    const idx = flakes.cursor = (flakes.cursor + 1) % SNOW_MAX;
+    const a = Math.random() * Math.PI * 2;
+    const rr = Math.random() * 2.5;
+    const i3 = idx * 3;
+    flakes.pos[i3]     = x + Math.cos(a) * rr;
+    flakes.pos[i3 + 1] = y - 0.5 + Math.random() * 1.0;
+    flakes.pos[i3 + 2] = z + Math.sin(a) * rr;
+    // deriva lateral leve + queda lenta (coerente com as faíscas da ilha)
+    flakes.vel[i3]     = Math.cos(a) * (0.05 + Math.random() * 0.15);
+    flakes.vel[i3 + 1] = -(0.8 + Math.random() * 0.8);
+    flakes.vel[i3 + 2] = Math.sin(a) * (0.05 + Math.random() * 0.15);
+    flakes.life[idx] = 6 + Math.random() * 5;
+  }
+}
+function updateSnow(dt, et) {
+  for (let i = 0; i < SNOW_MAX; i++) {
+    if (flakes.life[i] <= 0) continue;
+    flakes.life[i] -= dt;
+    const i3 = i * 3;
+    // queda suave com limite de velocidade (drift lento, estilo faíscas)
+    flakes.vel[i3 + 1] = Math.max(flakes.vel[i3 + 1] - dt * 0.4, -1.8);
+    flakes.vel[i3]     += Math.sin(et * 1.2 + i) * dt * 0.15;
+    flakes.vel[i3 + 2] += Math.cos(et * 1.0 + i * 1.3) * dt * 0.15;
+    flakes.pos[i3]     += flakes.vel[i3] * dt;
+    flakes.pos[i3 + 1] += flakes.vel[i3 + 1] * dt;
+    flakes.pos[i3 + 2] += flakes.vel[i3 + 2] * dt;
+    // "pousa" na água: some
+    if (flakes.pos[i3 + 1] <= -0.85) flakes.life[i] = 0;
+    if (flakes.life[i] <= 0) flakes.pos[i3 + 1] = -9999;
+  }
+  flakes.points.geometry.attributes.position.needsUpdate = true;
+}
+
+// ---------- Sol/Lua visíveis ----------
+const sunBall = new THREE.Mesh(new THREE.SphereGeometry(5, 20, 20),
+  new THREE.MeshBasicMaterial({ color: 0xffd97a, fog: false }));
+const moonBall = new THREE.Mesh(new THREE.SphereGeometry(3, 20, 20),
+  new THREE.MeshBasicMaterial({ color: 0xdfe8ff, fog: false }));
+scene.add(sunBall, moonBall);
+
+// ---------- Raycaster / interação ----------
+const raycaster = new THREE.Raycaster();
+const pointerNdc = new THREE.Vector2();
+const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const hitPoint = new THREE.Vector3();
+let heldBoat = null;
+let heldCloud = null;
+let pointerDownNdc = null;
+const heldTargets = new Map(); // barco → alvo de deslocamento p/ lerp
+
+function setNdc(e) {
+  pointerNdc.x = (e.clientX / innerWidth) * 2 - 1;
+  pointerNdc.y = -(e.clientY / innerHeight) * 2 + 1;
+}
+function pickBoat() {
+  raycaster.setFromCamera(pointerNdc, camera);
+  for (const b of boats) {
+    const hits = raycaster.intersectObject(b.obj, true);
+    if (hits.length) return b;
+  }
+  return null;
+}
+function pickCloud() {
+  raycaster.setFromCamera(pointerNdc, camera);
+  for (const c of clouds) {
+    if (raycaster.intersectObject(c, true).length) return c;
+  }
+  return null;
+}
+function pickVolcano() {
+  if (!volcanoG) return null;
+  raycaster.setFromCamera(pointerNdc, camera);
+  return raycaster.intersectObject(volcanoG, true).length ? volcanoG : null;
+}
+
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  setNdc(e);
+  pointerDownNdc = pointerNdc.clone();
+  const b = pickBoat();
+  if (b) {
+    heldBoat = b;
+    controls.enabled = false; // "puxar" sem a câmera girar junto
+    heldTargets.set(b, b.obj.position.clone());
+    heldTargets.get(b).y = -0.7;
+    renderer.domElement.style.cursor = 'grabbing';
+    renderer.domElement.setPointerCapture(e.pointerId);
+    return;
+  }
+  const c = pickCloud();
+  if (c) {
+    heldCloud = c;
+    c.userData.pulse = 1.4; // nevasca enquanto mantiver o dedo/clique
+    puffSnow(c.position.x, c.position.y, c.position.z, 15);
+  } else if (!b) {
+    // clicou no vulcão? erupção!
+    if (pickVolcano()) volcanoErupt();
+  }
+});
+
+renderer.domElement.addEventListener('pointermove', (e) => {
+  setNdc(e);
+  if (heldBoat) {
+    // projeção do ponteiro num plano horizontal na altura da água
+    dragPlane.normal.set(0, 1, 0);
+    dragPlane.constant = 0.7; // y = -0.7
+    raycaster.setFromCamera(pointerNdc, camera);
+    if (raycaster.ray.intersectPlane(dragPlane, hitPoint)) {
+      const len = Math.hypot(hitPoint.x, hitPoint.z);
+      if (len > 100) hitPoint.multiplyScalar(100 / len); // não deixa escapar do oceano
+      heldTargets.get(heldBoat).lerp(hitPoint, 0.35); // leve "peso" da água
+    }
+  } else if (heldCloud) {
+    // continua nevando enquanto o ponteiro estiver sobre a nuvem
+    const c = pickCloud();
+    if (c) {
+      heldCloud = c;
+      if (Math.random() < 0.4) puffSnow(c.position.x, c.position.y, c.position.z, 4);
+    } else {
+      heldCloud = null;
+    }
+  }
+});
+
+function endPointer() {
+  if (heldBoat) {
+    // soltar = barco VOLTA p/ a rota: pega o ponto do roteiro mais próximo da onde soltou
+    const b = heldBoat;
+    let best = 0, bd = Infinity;
+    b.targets.forEach((t, i) => {
+      const d = b.obj.position.distanceTo(targetWorld(t));
+      if (d < bd) { bd = d; best = i; }
+    });
+    b.ti = best;
+    b.state = 'sail';
+    b.timer = 0;
+    heldBoat = null;
+    controls.enabled = true;
+    renderer.domElement.style.cursor = '';
+  }
+  heldCloud = null;
+  pointerDownNdc = null;
+}
+renderer.domElement.addEventListener('pointerup', endPointer);
+renderer.domElement.addEventListener('pointercancel', endPointer);
+renderer.domElement.addEventListener('pointerleave', endPointer);
+
+// cursor "agarrável" ao passar por cima de barco/nuvem
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (heldBoat || heldCloud) return;
+  requestAnimationFrame(() => {
+    if (heldBoat || heldCloud) return;
+    setNdc(e);
+    renderer.domElement.style.cursor = (pickBoat() || pickCloud() || pickVolcano()) ? 'grab' : '';
+  });
+}, { passive: true });
+
+let dayTime = 0.22; // 0 = meia-noite ... 0.5 = meio-dia
+const dayCol = new THREE.Color(0x87b5d8);
+const nightCol = new THREE.Color(0x0b1026);
+const duskCol = new THREE.Color(0xf2a15a);
+
+function skyColors(t) {
+  const dayFactor = Math.cos((t - 0.5) * Math.PI * 2) * 0.5 + 0.5; // 1 no meio-dia
+  const col = new THREE.Color().lerpColors(nightCol, dayCol, dayFactor);
+  const duskFactor = Math.pow(1 - Math.abs(dayFactor * 2 - 1), 3);
+  col.lerp(duskCol, duskFactor * 0.75);
+  return { col, dayFactor, duskFactor };
+}
+
+// ---------- Animação ----------
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const et = clock.elapsedTime;
+
+  // 45s por dia inteiro
+  dayTime = (dayTime + dt / 45) % 1;
+  const { col, dayFactor } = skyColors(dayTime);
+  scene.background = col;
+  scene.fog.color.copy(col);
+  hemi.intensity = 0.25 + dayFactor * 0.85;
+  sun.intensity = 0.4 + dayFactor * 2.0;
+  stars.material.opacity = (1 - dayFactor) * 0.9;
+  stars.rotation.y += dt * 0.01;
+
+  // posição do sol e da lua
+  const sa = dayTime * Math.PI * 2 - Math.PI / 2;
+  sunBall.position.set(Math.cos(sa) * 150, Math.sin(sa) * 150, -110);
+  moonBall.position.set(-Math.cos(sa) * 150, -Math.sin(sa) * 150, 110);
+  // sol/lua visíveis: a luz direcional vem do astro ACIMA do horizonte
+  // (de noite vem da Lua — assim não aparece luz/sombra vinda d baixo)
+  const srcY = Math.sin(sa) * 150;
+  const lit = srcY > -10 ? sunBall : moonBall;
+  sun.position.copy(lit.position);
+  // cor quente de dia → fria de noite
+  sun.color.set(0xffe6b0).lerp(new THREE.Color(0xbcd0ff), 1 - dayFactor);
+  sun.target.position.set(0, 0, 0);
+
+  // ilha principal flutuando + rotação suave (subida/reduzida)
+  island.position.y = Math.sin(et * 0.5) * 0.2;
+  island.rotation.y += dt * 0.03;
+
+  // ilhas do arquipélago flutuando (bem menos amontoado do que antes)
+  for (const f of floaters) {
+    f.position.y = Math.sin(et * 0.5 + (f.userData.ph || 0)) * (f.userData.amp || 0.18) * 0.4;
+  }
+
+  // fumaça do vulcão (fumaça idle)
+  for (const sm of smokes) {
+    const t = (et * 0.25 + sm.userData.ph) % 1;
+    sm.position.set(
+      Math.sin(t * Math.PI * 2 + sm.userData.ph * 6) * 0.4,
+      8.2 + t * 5.5,
+      Math.cos(t * Math.PI * 2 + sm.userData.ph * 6) * 0.4
+    );
+    sm.scale.setScalar(0.5 + t * 1.8);
+    sm.material.opacity = (1 - t) * 0.5;
+  }
+
+  // erupção (clique no vulcão): lava + fumaça + brilho da cratera
+  if (eruption > 0) {
+    eruption = Math.max(0, eruption - dt);
+    const vp = volcanoG.position;
+    if (Math.random() < 0.85) {
+      spawnLava(vp.x, vp.y + 7.3, vp.z);
+      if (Math.random() < 0.5) spawnLava(vp.x, vp.y + 7.3, vp.z);
+    }
+    if (Math.random() < 0.3) spawnPuff(vp.x, vp.y + 7.8, vp.z);
+  }
+  craterMat.emissiveIntensity = 1.1 + Math.sin(et * 4.5) * 0.25 + Math.min(eruption, 1) * 2.5;
+  craterLight.intensity = 1.2 + Math.min(eruption, 1) * 10;
+
+  // lava em voo
+  for (let i = 0; i < LAVA_MAX; i++) {
+    if (lavaPts.life[i] <= 0) continue;
+    lavaPts.life[i] -= dt;
+    const i3 = i * 3;
+    lavaPts.vel[i3 + 1] -= dt * 9; // gravidade
+    lavaPts.pos[i3]     += lavaPts.vel[i3] * dt;
+    lavaPts.pos[i3 + 1] += lavaPts.vel[i3 + 1] * dt;
+    lavaPts.pos[i3 + 2] += lavaPts.vel[i3 + 2] * dt;
+    // "cai" na água: some
+    if (lavaPts.pos[i3 + 1] <= -0.9) lavaPts.life[i] = 0;
+    if (lavaPts.life[i] <= 0) lavaPts.pos[i3 + 1] = -9999;
+  }
+  lavaPts.points.geometry.attributes.position.needsUpdate = true;
+
+  // fumaça da erupção (pool)
+  for (const pf of puffs) {
+    const st = pf.userData.state;
+    if (!st.active) continue;
+    st.t += dt;
+    const k = st.t / st.dur;
+    if (k >= 1) { st.active = false; pf.material.opacity = 0; continue; }
+    pf.position.x += st.vx * dt;
+    pf.position.y += st.vy * dt;
+    pf.position.z += st.vz * dt;
+    st.vy += dt * 0.4; // sobe um pouco mais rápido
+    pf.scale.setScalar(pf.scale.x + dt * (1 + k));
+    pf.material.opacity = (1 - k) * 0.55;
+    pf.rotation.y += dt;
+  }
+
+  // farol: feixe girando + lâmpada pulsando
+  if (lighthouseBeamGroup) lighthouseBeamGroup.rotation.y += dt * 0.8;
+  if (lighthouseLampMat) lighthouseLampMat.emissiveIntensity = 1.5 + Math.sin(et * 3) * 0.4;
+
+  // água "respira" (bem suave)
+  water.position.y = -2 + Math.sin(et * 0.8) * 0.045;
+  waterTop.position.y = -0.9 + Math.sin(et * 0.8 + 0.4) * 0.035;
+  waterTop.rotation.y += dt * 0.02;
+
+  // barcos: navegam porto → porto (atracam, "descansam" e seguem)
+  const _bp = new THREE.Vector3();
+  for (const b of boats) {
+    const bob = Math.sin(et * 1.3 + b.phase) * 0.09;
+    if (b === heldBoat) {
+      b.obj.position.lerp(heldTargets.get(b), Math.min(1, dt * 6));
+    } else if (b.state === 'dock') {
+      // atracado: acompanha o píer (a ilha flutua de leve) e olha p/ ilha
+      const pd = portDefs[b.curPort];
+      const spot = pd.dock.getWorldPosition(_bp);
+      spot.y = -0.7 + bob;
+      b.obj.position.lerp(spot, Math.min(1, dt * 3));
+      const want = Math.atan2(pd.dir.z, -pd.dir.x);
+      let dA = want - b.obj.rotation.y;
+      dA = Math.atan2(Math.sin(dA), Math.cos(dA));
+      b.obj.rotation.y += dA * Math.min(1, dt * 4);
+      b.timer -= dt;
+      if (b.timer <= 0) { b.state = 'sail'; b.ti = 0; }
+    } else {
+      const t = b.targets[b.ti];
+      const tw = targetWorld(t);
+      const toT = _bp.copy(tw).sub(b.obj.position);
+      toT.y = 0;
+      const dist = toT.length();
+      const step = b.speed * dt;
+      if (dist <= step) {
+        if (t.kind === 'via') {
+          b.ti = (b.ti + 1) % b.targets.length;
+        } else {
+          b.curPort = t.port;
+          b.ti = (b.ti + 1) % b.targets.length;
+          b.state = 'dock';
+          b.timer = 5; // "atracado/estacionado" por 5s no píer
+        }
+        tw.y = -0.7 + bob;
+        b.obj.position.lerp(tw, 0.5);
+      } else {
+        b.obj.position.addScaledVector(toT, step / dist);
+      }
+      b.obj.position.y = -0.7 + bob;
+      // olha p/ onde vai
+      const dx = tw.x - b.obj.position.x, dz = tw.z - b.obj.position.z;
+      const want = Math.atan2(-dz, dx);
+      const dA = Math.atan2(Math.sin(want - b.obj.rotation.y), Math.cos(want - b.obj.rotation.y));
+      b.obj.rotation.y += dA * Math.min(1, dt * 4);
+    }
+    const targetTilt = bob * 0.6;
+    b.obj.rotation.z = THREE.MathUtils.lerp(b.obj.rotation.z, targetTilt, Math.min(1, dt * 4));
+  }
+
+  // boias dos portos: balançam na água e pulsam de leve
+  for (const pd of portDefs) {
+    for (const bu of pd.buoys) {
+      bu.m.position.y = -0.5 + 0.4 + Math.sin(et * 1.6 + bu.ph) * 0.1;
+      bu.m.material.emissiveIntensity = 0.5 + Math.sin(et * 2.2 + bu.ph) * 0.25;
+    }
+  }
+
+  // peixes nadando
+  updateFish(dt, et);
+
+  // tubarões, baleia e navio
+  updateSharks(dt, et);
+  updateWhale(dt, et);
+  updateShip(dt, et);
+
+  // nuvens
+  for (const c of clouds) {
+    c.userData.a += dt * c.userData.speed;
+    c.position.x = Math.cos(c.userData.a) * c.userData.r;
+    c.position.z = Math.sin(c.userData.a) * c.userData.r;
+    c.position.y += Math.sin(et * 0.5 + c.userData.bob) * dt * 0.3;
+    const bs = c.userData.baseScale;
+    const s = (heldCloud === c) ? bs * (1.15 + Math.sin(et * 20) * 0.04) : bs;
+    c.scale.setScalar(THREE.MathUtils.lerp(c.scale.x, s, Math.min(1, dt * 8)));
+    if (c.userData.pulse > 0) c.userData.pulse -= dt;
+    if (heldCloud === c || c.userData.pulse > 0) {
+      if (Math.random() < 0.35) puffSnow(c.position.x, c.position.y, c.position.z, 4);
+    }
+  }
+
+  // flocos
+  updateSnow(dt, et);
+
+  // faíscas
+  sparkles.rotation.y += dt * 0.06;
+  sparkles.position.y = island.position.y;
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+// ---------- Resize ----------
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+animate();
+setTimeout(() => document.getElementById('loader').classList.add('hidden'), 400);
+</script>
+</body>
+</html>
